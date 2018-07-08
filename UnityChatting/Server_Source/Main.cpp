@@ -736,7 +736,7 @@ void RecvPost(SESSION *p_session)
 	if (linear_size >= Unusesize)
 	{
 		wsabuffer[0].buf = p_session->s_recvQ->GetRearPtr();
-		wsabuffer[0].len = linear_size;
+		wsabuffer[0].len = Unusesize;
 	}
 	else
 	{
@@ -774,9 +774,7 @@ void SendPost(SESSION *p_session)
 	if (InterlockedCompareExchange(&p_session->s_send_flag, TRUE, FALSE) == TRUE) // flag 값이 true이면 true로 변경하고 변경되기 전 send_flag 를 반환함
 		return;
 
-	InterlockedExchange(&p_session->s_send_flag, TRUE);
 	InterlockedIncrement(&p_session->s_ref_count);
-
 	ZeroMemory(p_session->s_sendoverlap, sizeof(OVERLAPPED));
 
 	usesize = p_session->s_sendQ->GetUseSize();
@@ -785,7 +783,7 @@ void SendPost(SESSION *p_session)
 	if (linear_size >= usesize)
 	{
 		wsabuffer[0].buf = p_session->s_sendQ->GetFrontPtr();
-		wsabuffer[0].len = linear_size;
+		wsabuffer[0].len = usesize;
 	}
 	else
 	{
