@@ -8,9 +8,9 @@
 
 using namespace Olbbemi;
 
-/**-----------------------
-  *
-  *-----------------------*/
+/**----------------------------
+  * 서버 실행에 필요한 전역 객체
+  *----------------------------*/
 namespace 
 {
 	C_Log g_log;
@@ -20,9 +20,9 @@ namespace
 	ULONG64 g_pre_time = GetTickCount64();
 }
 
-/**-----------------------
-  *
-  *-----------------------*/
+/**-----------------------------------
+  * 파일로부터 읽을 데이터를 저장할 변수
+  *-----------------------------------*/
 namespace
 {
 	TCHAR parse_ip[8] = _TEXT(""), parse_log_level[8] = _TEXT("");
@@ -33,24 +33,49 @@ void DataParsing();
 
 int main()
 {
-	// 콘솔 크기 결정하는 함수 추가하기
-
+	system("mode con cols=55 lines=26");
 	_MAKEDIR("ChatServer");
 	DataParsing();
 	
 	g_profile = new C_Profile(parse_worker_thread + 1);
 	C_NetServer* lo_net_server = new C_ChatServer;
+	C_ChatServer* lo_chat_server = dynamic_cast<C_ChatServer*>(lo_net_server);
 
 	while (1)
 	{
 		ULONG64 lo_cur_time = GetTickCount64();
-		if (lo_cur_time - g_pre_time >= 1500)
+		if (lo_cur_time - g_pre_time >= 1000)
 		{
 			if (g_is_start == false)
 			{
+				printf("-----------------------------------------------------\n\n");
+				printf("Total Accept:          %lld\n", lo_net_server->M_TotalAcceptCount());
+				printf("Network Accept Count:  %d\n", lo_net_server->M_NetworkAcceptCount());
+				printf("Contents Accept Count: %d\n\n", lo_chat_server->M_ContentsPlayerCount());
+
+				printf("LFStack Alloc: %d\n", lo_net_server->M_StackAllocCount());
+				printf("LFStack Remain:   %d\n\n", lo_net_server->M_StackUseCount());
+				
+				printf("Serialize TLSPool Alloc:     %d\n", lo_net_server->M_TLSPoolAllocCount());
+				printf("Serialize TLSPool Use Chunk: %d\n", lo_net_server->M_TLSPoolChunkCount());
+				printf("Serialize TLSPool Use Node:  %d\n\n", lo_net_server->M_TLSPoolNodeCount());
+				
+				printf("Accept TPS:   %d\n", lo_net_server->M_AcceptTPS());
+				printf("Network TPS:  %d\n", lo_net_server->M_NetworkTPS());
+				printf("Contents TPS: %d\n\n", lo_chat_server->M_ContentsTPS());
+
+				printf("Player TLSPool Alloc:     %d\n", lo_chat_server->M_Player_TLSPoolAlloc());
+				//printf("Player TLSPool Use Chunk: %d\n", lo_chat_server->M_Player_TLSPoolUseChunk());
+				printf("Player TLSPool Use Node:  %d\n\n", lo_chat_server->M_Player_TLSPoolUseNode());
+
+				printf("Message TLSPool Alloc:     %d\n", lo_chat_server->M_MSG_TLSPoolAlloc());
+				printf("Message TLSPool Use Chunk: %d\n", lo_chat_server->M_MSG_TLSPoolUseChunk());
+				printf("Message TLSPool Use Node:  %d\n\n", lo_chat_server->M_MSG_TLSPoolUseNode());
 				printf("-----------------------------------------------------\n");
-				printf("Total Accept: %lld\n", lo_net_server->M_TotalAcceptCount());
-				printf("-----------------------------------------------------\n");
+
+				InterlockedExchange(&lo_net_server->v_accept_tps, 0);
+				InterlockedExchange(&lo_net_server->v_network_tps, 0);
+				InterlockedExchange(&lo_chat_server->v_contents_tps, 0);
 			}
 
 			g_pre_time = lo_cur_time;
@@ -88,9 +113,9 @@ int main()
 	return 0;
 }
 
-/**-----------------------
-  *
-  *-----------------------*/
+/**---------------------------------------------------------
+  * 서버 실행에 필요한 데이터를 파일로부터 읽어서 저장하는 함수
+  *---------------------------------------------------------*/
 void DataParsing()
 {
 	TCHAR lo_bind_ip[] = _TEXT("Bind_IP"), lo_log_level[] = _TEXT("Log_Level");

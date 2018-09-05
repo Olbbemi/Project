@@ -11,14 +11,14 @@
 
 using namespace Olbbemi;
 
-#define INDEX_VALUE 255
-
 /**-------------------------------------------------------------------------------------------------
   * 컨텐츠서버에서 사용할 IOCP 핸들 및 섹터
   * 서버에서 컨텐츠로 보내는 패킷을 저장할 락프리 큐 및 락프리 큐에 저장할 구조체를 할당받는 메모리풀 생성
   *-------------------------------------------------------------------------------------------------*/
 C_ChatServer::C_ChatServer()
 {
+	v_contents_tps = 0;
+
 	m_event_handle = CreateEvent(NULL, FALSE, FALSE, NULL);
 	if (m_event_handle == NULL)
 	{
@@ -29,7 +29,7 @@ C_ChatServer::C_ChatServer()
 
 	m_sector = new C_Sector;
 	m_message_pool = new C_MemoryPoolTLS<ST_MESSAGE>(false);
-	m_player_pool  = new C_MemoryPoolTLS<ST_PLAYER>(false);
+	m_player_pool  = new C_MemoryPool<ST_PLAYER>(false);
 	m_thread_handle = (HANDLE)_beginthreadex(nullptr, 0, M_UpdateThread, this, 0, nullptr);
 }
 
@@ -85,15 +85,18 @@ unsigned int C_ChatServer::M_UpdateProc()
 		{
 			while (m_actor_queue.M_GetUseCount() != 0)
 			{
+				char* lo_serialQ_buffer;
 				ST_PLAYER* new_player;
 				ST_MESSAGE* lo_message;
-
+				
 				m_actor_queue.M_Dequeue(lo_message);
 				switch (lo_message->type)
 				{
 					case E_MSG_TYPE::join:
 						new_player = m_player_pool->M_Alloc();
 						
+						new_player->pre_width_index = -1;	new_player->pre_height_index = -1;
+						new_player->cur_width_index = -1;	new_player->cur_height_index = -1;
 						new_player->account_no = 0;	new_player->session_id = lo_message->sessionID;
 						new_player->id = _TEXT("");		new_player->nickname = _TEXT("");
 						new_player->xpos = 0;		new_player->ypos = 0;
@@ -102,11 +105,13 @@ unsigned int C_ChatServer::M_UpdateProc()
 						break;
 
 					case E_MSG_TYPE::contents:
-						switch (*((WORD*)lo_message->payload))
+						lo_serialQ_buffer = ((C_Serialize*)(lo_message->payload))->M_GetBufferPtr();
+
+						switch (*((WORD*)lo_serialQ_buffer))
 						{
-							case en_PACKET_CS_CHAT_REQ_LOGIN:		M_Login(lo_message->sessionID, (ST_REQ_LOGIN*)((char*)lo_message->payload + CONTENTS_HEAD_SIZE));				break;
-							case en_PACKET_CS_CHAT_REQ_SECTOR_MOVE:	M_MoveSector(lo_message->sessionID, (ST_REQ_MOVE_SECTOR*)((char*)lo_message->payload + CONTENTS_HEAD_SIZE));	break;
-							case en_PACKET_CS_CHAT_REQ_MESSAGE:		M_Chatting(lo_message->sessionID, (ST_REQ_CHAT*)((char*)lo_message->payload + CONTENTS_HEAD_SIZE));				break;
+							case en_PACKET_CS_CHAT_REQ_LOGIN:		M_Login(lo_message->sessionID, (ST_REQ_LOGIN*)((char*)lo_serialQ_buffer + CONTENTS_HEAD_SIZE));				break;
+							case en_PACKET_CS_CHAT_REQ_SECTOR_MOVE:	M_MoveSector(lo_message->sessionID, (ST_REQ_MOVE_SECTOR*)((char*)lo_serialQ_buffer + CONTENTS_HEAD_SIZE));	break;
+							case en_PACKET_CS_CHAT_REQ_MESSAGE:		M_Chatting(lo_message->sessionID, (ST_REQ_CHAT*)((char*)lo_serialQ_buffer + CONTENTS_HEAD_SIZE));			break;
 						}
 
 						C_Serialize::S_Free((C_Serialize*)(lo_message->payload));
@@ -116,28 +121,30 @@ unsigned int C_ChatServer::M_UpdateProc()
 						auto lo_player = m_player_list.find(lo_message->sessionID);
 						if (lo_player != m_player_list.end())
 						{
-							TCHAR lo_action[] = _TEXT("Contents");
-							ST_Log* lo_log = new ST_Log({ " is NOT Exist" });
-
-							VIR_OnError(__LINE__, lo_action, E_LogState::error, lo_log);
-						}
-						else
-						{
+							m_sector->DeleteUnitSector(lo_player->second);
 							m_player_pool->M_Free(lo_player->second);
-
+							
 							LONG64 lo_check = m_player_list.erase(lo_message->sessionID);
 							if (lo_check == 0)
 							{
 								TCHAR lo_action[] = _TEXT("Contents");
-								ST_Log* lo_log = new ST_Log({ " is NOT Exist" });
+								ST_Log* lo_log = new ST_Log({ to_string(lo_message->sessionID) + " is NOT Exist" });
 
 								VIR_OnError(__LINE__, lo_action, E_LogState::error, lo_log);
 							}
+						}	
+						else
+						{
+							TCHAR lo_action[] = _TEXT("Contents");
+							ST_Log* lo_log = new ST_Log({ to_string(lo_message->sessionID) + " is NOT Exist" });
+
+							VIR_OnError(__LINE__, lo_action, E_LogState::error, lo_log);
 						}
 
 						break;
 				}
 
+				InterlockedIncrement(&v_contents_tps);
 				m_message_pool->M_Free(lo_message);
 			}
 		}
@@ -248,11 +255,12 @@ void C_ChatServer::M_Chatting(LONG64 pa_sessionID, ST_REQ_CHAT* pa_payload)
 		StringCchCopy(lo_packet.ID, _countof(lo_packet.ID), lo_player->second->id.c_str());
 		StringCchCopy(lo_packet.Nickname, _countof(lo_packet.Nickname), lo_player->second->nickname.c_str());
 
-		lo_packet.Message = new WCHAR[pa_payload->MessageLen / 2];
+		WCHAR* lo_message = new WCHAR[pa_payload->MessageLen / 2];
 		lo_packet.MessageLen = pa_payload->MessageLen;
-		StringCchCopy(lo_packet.Message, lo_packet.MessageLen, pa_payload->Message);
 
+		memcpy_s(lo_message, pa_payload->MessageLen, (char*)pa_payload + sizeof(ST_REQ_CHAT), pa_payload->MessageLen);
 		lo_serialQ->M_Enqueue((char*)&lo_packet, sizeof(ST_RES_CHAT));
+		lo_serialQ->M_Enqueue((char*)lo_message, pa_payload->MessageLen);
 
 		m_sector->GetUnitTotalSector(lo_player->second, lo_player_list);
 		int lo_size = lo_player_list.size();
@@ -261,6 +269,9 @@ void C_ChatServer::M_Chatting(LONG64 pa_sessionID, ST_REQ_CHAT* pa_payload)
 			C_Serialize::S_AddReference(lo_serialQ);
 			M_SendPacket(lo_player_list[i]->session_id, lo_serialQ);
 		}
+
+		//C_Serialize::S_AddReference(lo_serialQ);
+		//M_SendPacket(pa_sessionID, lo_serialQ);
 	}
 	else
 	{
@@ -348,7 +359,7 @@ void C_ChatServer::VIR_OnRecv(LONG64 pa_session_id, C_Serialize* pa_packet)
 }
 
 /**----------------------------------------------------------------------------------------------
-  *  시스템 에러를 제외한 모든 에러는 서버에서 처리하지 않고 컨텐츠쪽에서 처리하도록 유도하기 위한 함수
+  *  시스템 에러를 제외한 모든 에러는 서버에서 처리하지 않고 컨텐츠쪽에서 처리하도록 유도하기 위한 함수 -> 추후에 로그 남기는 별도 쓰레드 생성하기
   *----------------------------------------------------------------------------------------------*/
 void C_ChatServer::VIR_OnError(int pa_line, TCHAR* pa_action, E_LogState pa_log_level, ST_Log* pa_log)
 {
@@ -367,6 +378,53 @@ void C_ChatServer::VIR_OnError(int pa_line, TCHAR* pa_action, E_LogState pa_log_
 
 	delete pa_log;
 }
+
+//============================================================================================================
+
+/**---------------------------------
+  * 서버에서 관제용으로 출력하는 함수
+  *---------------------------------*/
+LONG C_ChatServer::M_ContentsTPS()
+{
+	return v_contents_tps;
+}
+
+LONG64 C_ChatServer::M_ContentsPlayerCount()
+{
+	return m_player_list.size();
+}
+
+LONG C_ChatServer::M_Player_TLSPoolAlloc()
+{
+	return m_player_pool->M_GetAllocCount();
+}
+
+//LONG C_ChatServer::M_Player_TLSPoolUseChunk()
+//{
+//	return m_player_pool->M_UseChunkCount();
+//}
+
+LONG C_ChatServer::M_Player_TLSPoolUseNode()
+{
+	return m_player_pool->M_GetUseCount();
+}
+
+LONG C_ChatServer::M_MSG_TLSPoolAlloc()
+{
+	return m_message_pool->M_AllocCount();
+}
+
+LONG C_ChatServer::M_MSG_TLSPoolUseChunk()
+{
+	return m_message_pool->M_UseChunkCount();
+}
+
+LONG C_ChatServer::M_MSG_TLSPoolUseNode()
+{
+	return m_message_pool->M_UseNodeCount();
+}
+
+//============================================================================================================
 
 void C_ChatServer::VIR_OnSend(LONG64 pa_session_id, int pa_send_size) {}
 void C_ChatServer::VIR_OnWorkerThreadBegin() {}

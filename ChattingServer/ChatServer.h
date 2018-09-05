@@ -42,7 +42,6 @@ namespace Olbbemi
 #pragma pack(push, 1)
 		struct ST_REQ_LOGIN
 		{
-			WORD	Type;
 			LONG64	AccountNo;
 			WCHAR	ID[20], Nickname[20];		// null 포함
 			char	SessionKey[64];
@@ -57,7 +56,6 @@ namespace Olbbemi
 
 		struct ST_REQ_MOVE_SECTOR
 		{
-			WORD	Type;
 			LONG64	AccountNo;
 			WORD	SectorX, SectorY;
 		};
@@ -71,10 +69,9 @@ namespace Olbbemi
 
 		struct ST_REQ_CHAT
 		{
-			WORD	Type;
 			INT64	AccountNo;
 			WORD	MessageLen;
-			WCHAR*  Message;		// null 미포함
+			//WCHAR*  Message;		// null 미포함
 		};
 
 		struct ST_RES_CHAT
@@ -83,7 +80,7 @@ namespace Olbbemi
 			INT64	AccountNo;
 			WCHAR	ID[20], Nickname[20];	// null 포함				
 			WORD	MessageLen;
-			WCHAR*  Message;				// null 미포함
+			//WCHAR*  Message;				// null 미포함
 		};
 
 		struct ST_HEART_BEAT
@@ -97,7 +94,7 @@ namespace Olbbemi
 		C_Sector* m_sector;
 
 		C_MemoryPoolTLS<ST_MESSAGE> *m_message_pool;
-		C_MemoryPoolTLS<ST_PLAYER>  *m_player_pool;
+		C_MemoryPool<ST_PLAYER>  *m_player_pool;
 
 		C_LFQueue<ST_MESSAGE*> m_actor_queue;
 		
@@ -109,6 +106,8 @@ namespace Olbbemi
 		void M_Chatting(LONG64 pa_sessionID, ST_REQ_CHAT* pa_payload);
 
 	public:
+
+		volatile LONG v_contents_tps;
 
 		C_ChatServer();
 		~C_ChatServer();
@@ -126,6 +125,17 @@ namespace Olbbemi
 		void VIR_OnWorkerThreadEnd() override;
 
 		void VIR_OnError(int pa_line, TCHAR* pa_action, E_LogState pa_log_level, ST_Log* pa_log) override;
+
+		LONG M_ContentsTPS();
+		LONG64 M_ContentsPlayerCount();
+
+		LONG M_Player_TLSPoolAlloc();
+		LONG M_Player_TLSPoolUseChunk();
+		LONG M_Player_TLSPoolUseNode();
+
+		LONG M_MSG_TLSPoolAlloc();
+		LONG M_MSG_TLSPoolUseChunk();
+		LONG M_MSG_TLSPoolUseNode();
 	};
 }
 
